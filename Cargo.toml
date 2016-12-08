@@ -1,0 +1,25 @@
+[package]
+name = "statsd-rs"
+version = "0.1.0"
+authors = ["wayslog <wayslog@163.com>"]
+
+[lib]
+name="libstatsd"
+path="src/lib.rs"
+
+[[bin]]
+name="statsd"
+path="src/bin/statsd.rs"
+
+[dependencies]
+net2 = "0.2.26"
+num_cpus = "1.1.0"
+futures = "0.1"
+tokio-core = "0.1"
+log = "0.3.6"
+env_logger = "0.3.5"
+lazy_static = "0.2.2"
+serde = "0.8"
+serde_json = "0.8"
+serde_derive = "0.8"
+crossbeam = "0.2.10"
