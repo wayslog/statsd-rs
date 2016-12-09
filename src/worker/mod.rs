@@ -1,35 +1,62 @@
 
 use std::collections::HashMap;
 use std::convert::From;
-use std::env;
-use std::fmt::Debug;
-use std::fs::File;
-use std::io::{self, Read, Error};
-use std::time::{Instant, Duration};
+use std::io::{self, Error};
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::num::ParseFloatError;
 use std::mem;
 use std::ops::DerefMut;
-use std::path::Path;
 use std::result;
 use std::string::FromUtf8Error;
 use std::sync::{Arc, Mutex};
-use std::thread::{self, JoinHandle};
+use std::thread;
+use std::time::Duration;
 
 use crossbeam::sync::MsQueue;
 use futures::stream::Stream;
-use futures::{Future, Async, Poll, Sink};
+use futures::{Async, Poll};
 use tokio_core::net::{UdpCodec, UdpSocket};
 use tokio_core::reactor::{Handle, Core};
 use net2::UdpBuilder;
 use net2::unix::UnixUdpBuilderExt;
 
+use ::CONFIG;
+use backend::BackEndSender;
 use com::now;
+use ring::HashRing;
 
 const CLCR: u8 = '\n' as u8;
 
-pub struct RecvCodec {
+pub struct Worker;
+
+impl Worker {
+    pub fn run(ring: HashRing) {
+        let mut core = Core::new().unwrap();
+        let handle = core.handle();
+        let socket = Self::build_socket(&*CONFIG.bind.clone(), &handle, true);
+        let service =
+            socket.framed(RecvCodec {}).flatten().for_each(|item| Ok(ring.dispatch(item)));
+        core.run(service).unwrap();
+    }
+
+    fn build_socket<T: ToSocketAddrs>(bind: T, handle: &Handle, reuse_port: bool) -> UdpSocket {
+        let socket = UdpBuilder::new_v4()
+            .expect("udp port is full")
+            .reuse_address(true)
+            .expect("SO_REUSEPORT not support")
+            .reuse_port(reuse_port)
+            .expect("SO_REUSEPORT not support")
+            .bind(bind)
+            .map_err(|err| {
+                error!("bind Faild error: {}", err);
+                err
+            })
+            .unwrap();
+        UdpSocket::from_socket(socket, handle).expect("can't convert from std::net::UdpSocket")
+    }
 }
+
+pub struct RecvCodec;
 
 impl UdpCodec for RecvCodec {
     type In = Packet;
@@ -117,8 +144,8 @@ impl Kind {
 
 #[derive(Clone, Debug)]
 pub struct Line {
-    metric: String,
-    kind: Kind,
+    pub metric: String,
+    pub kind: Kind,
 }
 
 impl Line {
@@ -139,7 +166,9 @@ impl Line {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct ValueCount(pub f64, pub f64);
+#[derive(Clone, Debug)]
 pub struct TimeSet(pub Vec<f64>, pub f64);
 
 
@@ -151,28 +180,7 @@ pub type CountData = CountMap;
 pub type GaugeMap = HashMap<String, f64>;
 pub type GaugeData = GaugeMap;
 
-
-pub struct MergeBuffer {
-    time: Arc<Mutex<TimeMap>>,
-    count: Arc<Mutex<CountMap>>,
-    gauge: Arc<Mutex<GaugeMap>>,
-}
-
-lazy_static! {
-    static ref THRESHOLDS: Vec<i64>  = {
-        let mut thresholds = vec![95, 90];
-        thresholds.sort_by(|lhs, rhs| lhs.partial_cmp(rhs).unwrap());
-        thresholds
-    };
-}
-
-const FLUSH_INTERVAL: usize = 5;
-
-// var counter_rates = {};
-// var counters = metrics.counters;
-// var timer_data = {};
-// var gauges = {}
-
+#[derive(Clone)]
 pub struct LightBuffer {
     pub timestamp: u64,
     pub gauge: GaugeData,
@@ -206,7 +214,7 @@ impl LightBuffer {
             let mut sum = values[0];
             let mut mean = min;
             let mut boundary = max;
-            for &threshold in &THRESHOLDS[..] {
+            for &threshold in &CONFIG.thresholds[..] {
                 let abs_threshold = threshold.abs();
                 let mut threshold_num = count;
                 if count > 1 {
@@ -242,7 +250,7 @@ impl LightBuffer {
             current.insert("upper".to_owned(), max);
             current.insert("lower".to_owned(), min);
             current.insert("count".to_owned(), sample_count);
-            current.insert("lower".to_owned(), sample_count / FLUSH_INTERVAL as f64);
+            current.insert("lower".to_owned(), sample_count / CONFIG.interval as f64);
 
             current.insert("sum".to_owned(), sum);
             current.insert("mean".to_owned(), mean);
@@ -254,8 +262,35 @@ impl LightBuffer {
     }
 }
 
+pub struct MergeBuffer {
+    interval: Duration,
+    time: Arc<Mutex<TimeMap>>,
+    count: Arc<Mutex<CountMap>>,
+    gauge: Arc<Mutex<GaugeMap>>,
+}
+
+impl Stream for MergeBuffer {
+    type Item = LightBuffer;
+    type Error = Error;
+    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+        thread::sleep(self.interval);
+        Ok(Async::Ready(Some(self.truncate())))
+    }
+}
+
 impl MergeBuffer {
-    pub fn truncate(&self) -> LightBuffer {
+    pub fn new(into: Arc<MsQueue<Line>>, interval: u64) -> MergeBuffer {
+        let buf = MergeBuffer {
+            interval: Duration::from_secs(interval),
+            time: Arc::new(Mutex::new(TimeMap::new())),
+            count: Arc::new(Mutex::new(CountMap::new())),
+            gauge: Arc::new(Mutex::new(GaugeMap::new())),
+        };
+        (&buf).collect(into);
+        buf
+    }
+
+    fn truncate(&self) -> LightBuffer {
         let mut time = self.time.lock().unwrap();
         let mut ntime = TimeMap::new();
         mem::swap(&mut ntime, time.deref_mut());
@@ -318,6 +353,13 @@ pub enum StatsdError {
     UnknownKind(String),
     ParseFloatError(ParseFloatError),
     FromUtf8Error(FromUtf8Error),
+    IoError(Error),
+}
+
+impl From<Error> for StatsdError {
+    fn from(oe: Error) -> StatsdError {
+        StatsdError::IoError(oe)
+    }
 }
 
 impl From<ParseFloatError> for StatsdError {
@@ -329,5 +371,15 @@ impl From<ParseFloatError> for StatsdError {
 impl From<FromUtf8Error> for StatsdError {
     fn from(oe: FromUtf8Error) -> StatsdError {
         StatsdError::FromUtf8Error(oe)
+    }
+}
+
+pub struct Adapter;
+
+impl Adapter {
+    pub fn run(input: Arc<MsQueue<Line>>) {
+        let merge_buffer = MergeBuffer::new(input, CONFIG.interval);
+        let mut sender = BackEndSender::default();
+        sender.serve(merge_buffer);
     }
 }

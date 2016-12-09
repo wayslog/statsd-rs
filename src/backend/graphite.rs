@@ -1,39 +1,37 @@
+use std::default::Default;
 
-use futures::stream::Stream;
-use futures::{Future, Async, Poll};
-use worker::{ValueCount, LightBuffer, TimeMap, CountMap, GaugeMap, TimeSet};
-use worker::{Result, StatsdError};
+use worker::{ValueCount, TimeData, CountData, GaugeData};
+use backend::BackEnd;
 
-pub struct BackEnd<S>
-    where S: Stream<Item = LightBuffer, Error = StatsdError>
-{
-    input: S,
-    prefix_counters: String,
+pub struct Graphite {
+    prefix_counter: String,
     prefix_stats_count: String,
-    prefix_timers: String,
-    prefix_gauges: String,
-    thresholds: Vec<usize>,
-    interval: f64,
+    prefix_timer: String,
+    prefix_gauge: String,
 }
 
-pub struct Entry {
-    ts: u64,
-    inmap: HashMap<String, f64>,
+impl Default for Graphite {
+    fn default() -> Self {
+        Graphite {
+            prefix_counter: "stats".to_owned(),
+            prefix_stats_count: "stats_counts".to_owned(),
+            prefix_timer: "stats.timers".to_owned(),
+            prefix_gauge: "stats.gauges".to_owned(),
+        }
+    }
 }
 
-impl<S> BackEnd<S>
-    where S: Stream<Item = LightBuffer, Error = StatsdError>
-{
-    fn counting(&self, ts: u64, count: CountMap, buffer: &mut Vec<u8>) {
+impl BackEnd for Graphite {
+    fn counting(&self, ts: u64, count: CountData, buffer: &mut Vec<u8>) {
         let iter = count.into_iter()
             .map(|(key, ValueCount(v, c))| {
-                format!("{pc:}.{key} {val} {ts}\n{psc}.{key} {count} {ts}\n",
-                        pc = self.prefix_counters,
+                format!("{pc}.{key} {val} {ts}\n{psc}.{key} {count} {ts}\n",
+                        pc = self.prefix_counter,
                         psc = self.prefix_stats_count,
                         key = key,
                         ts = ts,
                         // count rate
-                        val = v / self.interval,
+                        val = v,
                         count = c)
             });
         for dline in iter {
@@ -41,30 +39,25 @@ impl<S> BackEnd<S>
         }
     }
 
-    fn gaguing(&self, ts: u64, gauge: GaugeMap, buffer: &mut Vec<u8>) {
+    fn gauging(&self, ts: u64, gauge: GaugeData, buffer: &mut Vec<u8>) {
         let iter = gauge.into_iter()
-            .map(|(key, val)| format!("{}.{} {} {}", self.prefix_gauges, key, val, ts));
+            .map(|(key, val)| format!("{}.{} {} {}\n", self.prefix_gauge, key, val, ts));
         for line in iter {
             buffer.extend_from_slice(line.as_bytes());
         }
     }
 
-    fn timing(&self, ts: u64, time: TimeMap, buffer: &mut Vec<u8>) {}
-}
-
-
-impl<S> Stream for BackEnd<S>
-    where S: Stream<Item = LightBuffer, Error = StatsdError>
-{
-    type Item = Entry;
-    type Error = StatsdError;
-
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        let buf = try_ready!(self.input.poll()).expect("never term");
-        let LightBuffer { timestamp: ts, time, count, gauge } = buf;
-        let mut buffer = Vec::new();
-        self.counting(ts, count, &mut buffer);
-        self.gaguing(ts, gauge, &mut buffer);
-        Ok(Async::NotReady)
+    fn timing(&self, ts: u64, time: TimeData, buffer: &mut Vec<u8>) {
+        for (thekey, submap) in time.into_iter() {
+            for (subkey, val) in submap.into_iter() {
+                let line = format!("{}.{}.{} {} {}\n",
+                                   self.prefix_timer,
+                                   thekey,
+                                   subkey,
+                                   val,
+                                   ts);
+                buffer.extend_from_slice(line.as_bytes());
+            }
+        }
     }
 }

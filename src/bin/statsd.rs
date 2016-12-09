@@ -1,3 +1,5 @@
+extern crate libstatsd;
+
 fn main() {
-    println!("Hello, world!");
+    libstatsd::run();
 }
