@@ -34,6 +34,7 @@ impl Worker {
         let mut core = Core::new().unwrap();
         let handle = core.handle();
         let socket = Self::build_socket(&*CONFIG.bind.clone(), &handle, true);
+        info!("worker: bind at {:?}", &CONFIG.bind);
         let service =
             socket.framed(RecvCodec {}).flatten().for_each(|item| Ok(ring.dispatch(item)));
         core.run(service).unwrap();
@@ -92,12 +93,23 @@ impl Stream for Packet {
             debug!("a packet was parsed");
             return Ok(Async::Ready(None));
         }
+
         debug!("send a part of one packet");
         let pos = self.buf.iter().position(|x| x == &CLCR).unwrap_or(self.buf.len());
 
         let mut drained: Vec<_> = self.buf.drain(..pos + 1).into_iter().collect();
         let _clcr = drained.pop().unwrap();
-        let line_str = String::from_utf8(drained)?;
+        let line_str = match String::from_utf8(drained) {
+            Ok(item) => {
+                debug!("get a new line {}", &item);
+                item
+            }
+            Err(err) => {
+                warn!("parse line error {:?}", err);
+                return Ok(Async::NotReady);
+            }
+        };
+
         match Line::parse(line_str) {
             Ok(line) => Ok(Async::Ready(Some(line))),
             Err(err) => {
@@ -190,6 +202,7 @@ pub struct LightBuffer {
 
 impl LightBuffer {
     fn caculate_time(time: TimeMap) -> TimeData {
+        debug!("caculate time value start");
         let mut time_data = TimeData::new();
         for (key, TimeSet(mut values, sample_count)) in time {
             let mut current = HashMap::new();
@@ -273,6 +286,7 @@ impl Stream for MergeBuffer {
     type Item = LightBuffer;
     type Error = Error;
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+        debug!("get a sleep with {:?}", self.interval);
         thread::sleep(self.interval);
         Ok(Async::Ready(Some(self.truncate())))
     }
@@ -292,22 +306,25 @@ impl MergeBuffer {
 
     fn truncate(&self) -> LightBuffer {
         let mut time = self.time.lock().unwrap();
+        let mut count = self.count.lock().unwrap();
+        let mut gauge = self.gauge.lock().unwrap();
+        let now = now();
+
         let mut ntime = TimeMap::new();
         mem::swap(&mut ntime, time.deref_mut());
         mem::drop(time);
 
-        let mut count = self.count.lock().unwrap();
         let mut ncount = CountMap::new();
         mem::swap(&mut ncount, count.deref_mut());
         mem::drop(count);
 
-        let mut gauge = self.gauge.lock().unwrap();
         let mut ngauge = GaugeMap::new();
         mem::swap(&mut ngauge, gauge.deref_mut());
         mem::drop(gauge);
+
         let time_data = LightBuffer::caculate_time(ntime);
         LightBuffer {
-            timestamp: now(),
+            timestamp: now,
             time: time_data,
             count: ncount,
             gauge: ngauge,
@@ -380,6 +397,7 @@ impl Adapter {
     pub fn run(input: Arc<MsQueue<Line>>) {
         let merge_buffer = MergeBuffer::new(input, CONFIG.interval);
         let mut sender = BackEndSender::default();
+        debug!("start an adaptor");
         sender.serve(merge_buffer);
     }
 }

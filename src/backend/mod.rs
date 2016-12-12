@@ -1,7 +1,7 @@
 pub mod graphite;
 pub mod banshee;
 
-use std::io::{Error, Write};
+use std::io::{Error, Write, ErrorKind, Result};
 use std::net::SocketAddr;
 
 use futures::stream::Stream;
@@ -15,17 +15,25 @@ use self::banshee::Banshee;
 use ::CONFIG;
 
 pub trait BackEnd {
-    fn counting(&self, ts: u64, count: CountData, buf: &mut Vec<u8>);
-    fn gauging(&self, ts: u64, gauge: GaugeData, buf: &mut Vec<u8>);
-    fn timing(&self, ts: u64, time: TimeData, buf: &mut Vec<u8>);
+    fn counting(&self, ts: u64, count: &CountData, buf: &mut Vec<u8>);
+    fn gauging(&self, ts: u64, gauge: &GaugeData, buf: &mut Vec<u8>);
+    fn timing(&self, ts: u64, time: &TimeData, buf: &mut Vec<u8>);
+
+    fn validate(&self) -> bool {
+        debug!("validate backend");
+        true
+    }
 
     /// auto apply function
-    fn apply(&mut self, light: LightBuffer) -> Vec<u8> {
-        let LightBuffer { timestamp: ts, time, count, gauge } = light;
+    fn apply(&mut self, light: &LightBuffer) -> Vec<u8> {
         let mut buffer = Vec::new();
-        self.counting(ts, count, &mut buffer);
-        self.gauging(ts, gauge, &mut buffer);
-        self.timing(ts, time, &mut buffer);
+        if !self.validate() {
+            return buffer;
+        }
+        let ts = light.timestamp;
+        self.counting(ts, &light.count, &mut buffer);
+        self.gauging(ts, &light.gauge, &mut buffer);
+        self.timing(ts, &light.time, &mut buffer);
         buffer
     }
 }
@@ -52,25 +60,40 @@ impl BackEndSender {
         let handle = core.handle();
         let graphite_addr = &CONFIG.graphite.address.parse::<SocketAddr>().unwrap();
         let banshee_addr = &CONFIG.banshee.address.parse::<SocketAddr>().unwrap();
-        let service = input.for_each(|item| {
-            let graphite_buf = self.graphite.apply(item.clone());
-            let graphite = TcpStream::connect(&graphite_addr, &handle)
-                .and_then(move |mut socket| socket.write_all(&graphite_buf))
-                .or_else(|err| {
-                    error!("unexcept error: {:?}", err);
-                    Err(())
-                });
 
-            let banshee_buf = self.banshee.apply(item);
-            let banshee = TcpStream::connect(&banshee_addr, &handle)
-                .and_then(move |mut socket| socket.write_all(&banshee_buf))
-                .or_else(|err| {
-                    error!("unexcept error: {:?}", err);
-                    Err(())
-                });
-            handle.spawn(graphite.join(banshee).and_then(|_| Ok(())));
+        let service = input.for_each(|item| {
+            if self.graphite.validate() {
+                let graphite_buf = self.graphite.apply(&item);
+                let graphite = TcpStream::connect(&graphite_addr, &handle)
+                    .and_then(move |socket| send_to(socket, &graphite_buf))
+                    .or_else(|err| Err(error!("unexcept error: {:?}", err)));
+
+                handle.spawn(graphite.and_then(|_| Ok(())));
+            }
+            if self.banshee.validate() {
+                let banshee_buf = self.banshee.apply(&item);
+                let banshee = TcpStream::connect(&banshee_addr, &handle)
+                    .and_then(move |socket| send_to(socket, &banshee_buf))
+                    .or_else(|err| Err(error!("unexcept error: {:?}", err)));
+                handle.spawn(banshee.and_then(|_| Ok(())));
+            }
+
             Ok(())
         });
         core.run(service).unwrap();
+    }
+}
+
+fn send_to(mut socket: TcpStream, buf: &[u8]) -> Result<()> {
+    if buf.len() == 0 {
+        return Ok(());
+    }
+    loop {
+        let ret = match socket.write_all(buf) {
+            Ok(n) => Ok(n),
+            Err(ref err) if err.kind() == ErrorKind::WouldBlock => continue,
+            Err(err) => Err(err),
+        };
+        return ret;
     }
 }

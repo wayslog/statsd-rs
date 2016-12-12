@@ -22,9 +22,9 @@ impl Default for Graphite {
 }
 
 impl BackEnd for Graphite {
-    fn counting(&self, ts: u64, count: CountData, buffer: &mut Vec<u8>) {
+    fn counting(&self, ts: u64, count: &CountData, buffer: &mut Vec<u8>) {
         let iter = count.into_iter()
-            .map(|(key, ValueCount(v, c))| {
+            .map(|(key, &ValueCount(v, c))| {
                 format!("{pc}.{key} {val} {ts}\n{psc}.{key} {count} {ts}\n",
                         pc = self.prefix_counter,
                         psc = self.prefix_stats_count,
@@ -39,7 +39,7 @@ impl BackEnd for Graphite {
         }
     }
 
-    fn gauging(&self, ts: u64, gauge: GaugeData, buffer: &mut Vec<u8>) {
+    fn gauging(&self, ts: u64, gauge: &GaugeData, buffer: &mut Vec<u8>) {
         let iter = gauge.into_iter()
             .map(|(key, val)| format!("{}.{} {} {}\n", self.prefix_gauge, key, val, ts));
         for line in iter {
@@ -47,7 +47,7 @@ impl BackEnd for Graphite {
         }
     }
 
-    fn timing(&self, ts: u64, time: TimeData, buffer: &mut Vec<u8>) {
+    fn timing(&self, ts: u64, time: &TimeData, buffer: &mut Vec<u8>) {
         for (thekey, submap) in time.into_iter() {
             for (subkey, val) in submap.into_iter() {
                 let line = format!("{}.{}.{} {} {}\n",

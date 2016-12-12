@@ -1,0 +1,14 @@
+{
+    "thresholds": [90, 95],
+    "graphite": {
+        "address": "127.0.0.1:8125"
+    },
+    "banshee": {
+        "allow": ["mean_90", "count_ps"],
+        "address": "127.0.0.1:8126"
+    },
+    "interval": 5,
+    "stddev": 5,
+    "bind": "0.0.0.0:8125",
+    "worker": 32
+}

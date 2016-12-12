@@ -110,7 +110,9 @@ lazy_static! {
         use std::env;
         let mut args = env::args().into_iter().skip(1);
         let pth = args.next().unwrap_or("/srv/statsd-rs/etc/statsd.json".to_owned());
-        Config::load(pth)
+        let config = Config::load(pth);
+        info!("load Config as: {:?}", config);
+        config
     };
 }
 

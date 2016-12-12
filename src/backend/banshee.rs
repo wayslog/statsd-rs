@@ -8,6 +8,7 @@ pub struct Banshee {
     prefix_counter: String,
     prefix_timer: String,
     prefix_gauge: String,
+    validate: bool,
 }
 
 impl Default for Banshee {
@@ -17,14 +18,20 @@ impl Default for Banshee {
             prefix_counter: "counter".to_owned(),
             prefix_timer: "timer".to_owned(),
             prefix_gauge: "gauge".to_owned(),
+            validate: true,
         }
     }
 }
 
 impl BackEnd for Banshee {
-    fn counting(&self, ts: u64, count: CountData, buf: &mut Vec<u8>) {
+    fn validate(&self) -> bool {
+        debug!("invalidate backend for banshee");
+        self.validate
+    }
+
+    fn counting(&self, ts: u64, count: &CountData, buf: &mut Vec<u8>) {
         let iter = count.into_iter()
-            .map(|(key, ValueCount(value, _count))| {
+            .map(|(key, &ValueCount(value, _count))| {
                 format!("{}.{} {} {}\n", self.prefix_counter, key, ts, value)
             });
         for line in iter {
@@ -32,7 +39,7 @@ impl BackEnd for Banshee {
         }
     }
 
-    fn gauging(&self, ts: u64, gauge: GaugeData, buf: &mut Vec<u8>) {
+    fn gauging(&self, ts: u64, gauge: &GaugeData, buf: &mut Vec<u8>) {
         let iter = gauge.into_iter()
             .map(|(key, value)| format!("{}.{} {} {}\n", self.prefix_gauge, key, ts, value));
         for line in iter {
@@ -40,7 +47,7 @@ impl BackEnd for Banshee {
         }
     }
 
-    fn timing(&self, ts: u64, time: TimeData, buf: &mut Vec<u8>) {
+    fn timing(&self, ts: u64, time: &TimeData, buf: &mut Vec<u8>) {
         for (key, submap) in time {
             for sub_key in &self.allow_time {
                 let value = submap.get(sub_key).expect("never empty");
