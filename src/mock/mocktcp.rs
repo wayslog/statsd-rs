@@ -50,8 +50,8 @@ fn read_line<R: BufRead + Sized>(r: &mut R) -> bool {
             }
         }
         Err(ref err) if err.kind() == ErrorKind::WouldBlock => {
-            info!("get a wouldblock error");
-            true
+            debug!("get a wouldblock error");
+            false
         }
         Err(err) => {
             panic!("unexpect error {:?}", err);
@@ -65,7 +65,7 @@ fn work(addr: &SocketAddr) {
 
     let socket = TcpListener::bind(&addr, &handle).unwrap();
     let service = socket.incoming().for_each(|(sock, src_addr)| {
-        info!("new connection occur from {:?}", src_addr);
+        debug!("new connection occur from {:?}", src_addr);
         let lazy = futures::lazy(|| Ok(sock.split()));
         let amt = lazy.and_then(|(reader, _writer)| {
             let mut bufr = BufReader::new(reader);

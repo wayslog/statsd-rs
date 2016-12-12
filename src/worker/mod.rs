@@ -10,7 +10,7 @@ use std::result;
 use std::string::FromUtf8Error;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crossbeam::sync::MsQueue;
 use futures::stream::Stream;
@@ -95,10 +95,14 @@ impl Stream for Packet {
         }
 
         debug!("send a part of one packet");
-        let pos = self.buf.iter().position(|x| x == &CLCR).unwrap_or(self.buf.len());
+        let mut drained: Vec<_> = match self.buf.iter().position(|x| x == &CLCR) {
+            Some(pos) => self.buf.drain(..pos + 1).into_iter().collect(),
+            None => self.buf.drain(..).into_iter().collect(),
+        };
+        if drained.len() > 0 && drained[drained.len() - 1] == CLCR {
+            let _clcr = drained.pop().unwrap();
+        }
 
-        let mut drained: Vec<_> = self.buf.drain(..pos + 1).into_iter().collect();
-        let _clcr = drained.pop().unwrap();
         let line_str = match String::from_utf8(drained) {
             Ok(item) => {
                 debug!("get a new line {}", &item);
@@ -280,6 +284,7 @@ pub struct MergeBuffer {
     time: Arc<Mutex<TimeMap>>,
     count: Arc<Mutex<CountMap>>,
     gauge: Arc<Mutex<GaugeMap>>,
+    last: Instant,
 }
 
 impl Stream for MergeBuffer {
@@ -287,7 +292,11 @@ impl Stream for MergeBuffer {
     type Error = Error;
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         debug!("get a sleep with {:?}", self.interval);
-        thread::sleep(self.interval);
+        let now = Instant::now();
+        if now.duration_since(self.last) < self.interval {
+            return Ok(Async::NotReady);
+        }
+        self.last = now;
         Ok(Async::Ready(Some(self.truncate())))
     }
 }
@@ -299,6 +308,7 @@ impl MergeBuffer {
             time: Arc::new(Mutex::new(TimeMap::new())),
             count: Arc::new(Mutex::new(CountMap::new())),
             gauge: Arc::new(Mutex::new(GaugeMap::new())),
+            last: Instant::now(),
         };
         (&buf).collect(into);
         buf
@@ -321,6 +331,11 @@ impl MergeBuffer {
         let mut ngauge = GaugeMap::new();
         mem::swap(&mut ngauge, gauge.deref_mut());
         mem::drop(gauge);
+
+        info!("get a {} timer, {} counter, {} gauger",
+              ntime.len(),
+              ncount.len(),
+              ngauge.len());
 
         let time_data = LightBuffer::caculate_time(ntime);
         LightBuffer {
@@ -347,6 +362,7 @@ impl MergeBuffer {
                         tinst.1 += c;
                     }
                     Count(v) => {
+                        info!("pushed count value");
                         let mut count_guard = count.lock().unwrap();
                         let mut cinst = count_guard.entry(m).or_insert(ValueCount(0.0, 0.0));
                         cinst.0 += v;

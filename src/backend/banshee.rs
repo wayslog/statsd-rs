@@ -25,7 +25,7 @@ impl Default for Banshee {
 
 impl BackEnd for Banshee {
     fn validate(&self) -> bool {
-        debug!("invalidate backend for banshee");
+        debug!("is validate backend for banshee: {}", self.validate);
         self.validate
     }
 

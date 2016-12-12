@@ -64,6 +64,7 @@ impl BackEndSender {
         let service = input.for_each(|item| {
             if self.graphite.validate() {
                 let graphite_buf = self.graphite.apply(&item);
+                info!("get a value {}", &String::from_utf8_lossy(&graphite_buf));
                 let graphite = TcpStream::connect(&graphite_addr, &handle)
                     .and_then(move |socket| send_to(socket, &graphite_buf))
                     .or_else(|err| Err(error!("unexcept error: {:?}", err)));
@@ -72,12 +73,12 @@ impl BackEndSender {
             }
             if self.banshee.validate() {
                 let banshee_buf = self.banshee.apply(&item);
+                info!("get a value {}", &String::from_utf8_lossy(&banshee_buf));
                 let banshee = TcpStream::connect(&banshee_addr, &handle)
                     .and_then(move |socket| send_to(socket, &banshee_buf))
                     .or_else(|err| Err(error!("unexcept error: {:?}", err)));
                 handle.spawn(banshee.and_then(|_| Ok(())));
             }
-
             Ok(())
         });
         core.run(service).unwrap();
@@ -85,14 +86,16 @@ impl BackEndSender {
 }
 
 fn send_to(mut socket: TcpStream, buf: &[u8]) -> Result<()> {
+    info!("want to write the buffer");
     if buf.len() == 0 {
+        info!("but get a zero len of buffer");
         return Ok(());
     }
     loop {
+        info!("write back all the value");
         let ret = match socket.write_all(buf) {
-            Ok(n) => Ok(n),
             Err(ref err) if err.kind() == ErrorKind::WouldBlock => continue,
-            Err(err) => Err(err),
+            var => var,
         };
         return ret;
     }
