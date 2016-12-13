@@ -1,14 +1,15 @@
 pub mod graphite;
 pub mod banshee;
 
-use std::io::{Error, Write, ErrorKind, Result};
+use std::io::{Write, ErrorKind, Result};
 use std::net::SocketAddr;
+use std::time::Duration;
+use std::thread;
 
-use futures::stream::Stream;
 use futures::Future;
 use tokio_core::reactor::Core;
 use tokio_core::net::TcpStream;
-use worker::{LightBuffer, TimeData, CountData, GaugeData};
+use worker::{LightBuffer, TimeData, CountData, GaugeData, MergeBuffer};
 
 use self::graphite::Graphite;
 use self::banshee::Banshee;
@@ -53,39 +54,34 @@ impl Default for BackEndSender {
 }
 
 impl BackEndSender {
-    pub fn serve<S>(&mut self, input: S)
-        where S: Stream<Item = LightBuffer, Error = Error>
-    {
+    pub fn serve(&mut self, input: MergeBuffer) {
         let mut core = Core::new().unwrap();
         let handle = core.handle();
         let graphite_addr = &CONFIG.graphite.address.parse::<SocketAddr>().unwrap();
         let banshee_addr = &CONFIG.banshee.address.parse::<SocketAddr>().unwrap();
+        let dur = Duration::from_secs(CONFIG.interval);
+        loop {
+            thread::sleep(dur);
+            let item = input.truncate();
+            let graphite_buf = self.graphite.apply(&item);
+            let graphite = TcpStream::connect(&graphite_addr, &handle).and_then(|socket| {
+                info!("get a new connection");
+                send_to(socket, graphite_buf)
+            });
 
-        let service = input.for_each(|item| {
-            if self.graphite.validate() {
-                let graphite_buf = self.graphite.apply(&item);
-                info!("get a value {}", &String::from_utf8_lossy(&graphite_buf));
-                let graphite = TcpStream::connect(&graphite_addr, &handle)
-                    .and_then(move |socket| send_to(socket, &graphite_buf))
-                    .or_else(|err| Err(error!("unexcept error: {:?}", err)));
-
-                handle.spawn(graphite.and_then(|_| Ok(())));
-            }
-            if self.banshee.validate() {
-                let banshee_buf = self.banshee.apply(&item);
-                info!("get a value {}", &String::from_utf8_lossy(&banshee_buf));
-                let banshee = TcpStream::connect(&banshee_addr, &handle)
-                    .and_then(move |socket| send_to(socket, &banshee_buf))
-                    .or_else(|err| Err(error!("unexcept error: {:?}", err)));
-                handle.spawn(banshee.and_then(|_| Ok(())));
-            }
-            Ok(())
-        });
-        core.run(service).unwrap();
+            let banshee_buf = self.banshee.apply(&item);
+            let banshee = TcpStream::connect(&banshee_addr, &handle).and_then(|socket| {
+                info!("get a new connection");
+                send_to(socket, banshee_buf)
+            });
+            let service = graphite.join(banshee);
+            core.run(service).unwrap();
+        }
     }
 }
 
-fn send_to(mut socket: TcpStream, buf: &[u8]) -> Result<()> {
+
+fn send_to(mut socket: TcpStream, buf: Vec<u8>) -> Result<()> {
     info!("want to write the buffer");
     if buf.len() == 0 {
         info!("but get a zero len of buffer");
@@ -93,9 +89,12 @@ fn send_to(mut socket: TcpStream, buf: &[u8]) -> Result<()> {
     }
     loop {
         info!("write back all the value");
-        let ret = match socket.write_all(buf) {
+        let ret = match socket.write_all(&buf) {
             Err(ref err) if err.kind() == ErrorKind::WouldBlock => continue,
-            var => var,
+            var => {
+                info!("get a result {:?}", &var);
+                var
+            }
         };
         return ret;
     }

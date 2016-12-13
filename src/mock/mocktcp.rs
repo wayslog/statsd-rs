@@ -5,14 +5,14 @@ extern crate log;
 
 extern crate env_logger;
 
-use futures::Future;
+use futures::{Future, Async};
 use futures::stream::Stream;
 use tokio_core::reactor::Core;
 use tokio_core::io::Io;
 use tokio_core::net::TcpListener;
 
 use std::env;
-use std::io::{BufRead, BufReader, ErrorKind};
+use std::io::{Read, BufReader, ErrorKind};
 use std::net::SocketAddr;
 use std::thread;
 
@@ -38,14 +38,20 @@ fn main() {
     }
 }
 
-fn read_line<R: BufRead + Sized>(r: &mut R) -> bool {
-    let mut line = String::new();
-    match r.read_line(&mut line) {
+fn read_line<R: Read + Sized>(r: &mut R) -> bool {
+    let mut line = Vec::new();
+
+    match r.read(&mut line) {
         Ok(size) => {
             if size == 0 {
+                info!("get a message as ---{}--- with {} bytes",
+                      String::from_utf8_lossy(&line),
+                      size);
                 false
             } else {
-                info!("get a message as ---{}--- with {} bytes", &line, size);
+                info!("get a message as ---{}--- with {} bytes",
+                      String::from_utf8_lossy(&line),
+                      size);
                 true
             }
         }
@@ -67,9 +73,15 @@ fn work(addr: &SocketAddr) {
     let service = socket.incoming().for_each(|(sock, src_addr)| {
         debug!("new connection occur from {:?}", src_addr);
         let lazy = futures::lazy(|| Ok(sock.split()));
-        let amt = lazy.and_then(|(reader, _writer)| {
-            let mut bufr = BufReader::new(reader);
-            while read_line(&mut bufr) {}
+        let amt = lazy.and_then(|(mut reader, _writer)| {
+            loop {
+                if let Async::NotReady = reader.poll_read() {
+                    continue;
+                } else {
+                    break;
+                }
+            }
+            read_line(&mut reader);
             Ok(())
         });
         handle.spawn(amt);

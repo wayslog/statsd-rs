@@ -1,4 +1,3 @@
-
 use std::collections::HashMap;
 use std::convert::From;
 use std::io::{self, Error};
@@ -10,7 +9,6 @@ use std::result;
 use std::string::FromUtf8Error;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
 
 use crossbeam::sync::MsQueue;
 use futures::stream::Stream;
@@ -211,31 +209,33 @@ impl LightBuffer {
         for (key, TimeSet(mut values, sample_count)) in time {
             let mut current = HashMap::new();
             if values.len() == 0 {
-                current.insert("count".to_string(), 0.0f64);
+                current.insert("count".to_string(), 0.0);
                 current.insert("count_ps".to_string(), 0.0);
                 time_data.insert(key, current);
                 continue;
             }
+
             values.sort_by(|v1, v2| v1.partial_cmp(v2).unwrap());
+
             let count = values.len();
             let min = values[0];
             let max = values[count - 1];
+            let mut sum = values[0];
+            let mut mean = min;
+            let mut boundary = max;
             let mut cumulative: Vec<f64> = vec![min];
             let mut latest = min;
 
-            for &val in &values[1..] {
+            for &val in values.iter().skip(1) {
                 cumulative.push(val + latest);
                 latest = val;
             }
 
-            let mut sum = values[0];
-            let mut mean = min;
-            let mut boundary = max;
             for &threshold in &CONFIG.thresholds[..] {
                 let abs_threshold = threshold.abs();
                 let mut threshold_num = count;
                 if count > 1 {
-                    threshold_num = (threshold.abs() / 100 * (count as i64)) as usize;
+                    threshold_num = (threshold.abs() * (count as i64) / 100) as usize;
                     if threshold_num == 0 {
                         continue;
                     }
@@ -256,9 +256,12 @@ impl LightBuffer {
                                boundary);
                 current.insert(format!("sum_{}", abs_threshold), sum);
             }
+
             sum = cumulative[count - 1];
             mean = sum / count as f64;
-            let median = if count % 2 == 0 {
+            let median = if count == 1 {
+                values[0]
+            } else if count % 2 == 0 {
                 values[count / 2]
             } else {
                 (values[count / 2 - 1] + values[count / 2]) / 2.0
@@ -267,7 +270,7 @@ impl LightBuffer {
             current.insert("upper".to_owned(), max);
             current.insert("lower".to_owned(), min);
             current.insert("count".to_owned(), sample_count);
-            current.insert("lower".to_owned(), sample_count / CONFIG.interval as f64);
+            current.insert("count_ps".to_owned(), sample_count / CONFIG.interval as f64);
 
             current.insert("sum".to_owned(), sum);
             current.insert("mean".to_owned(), mean);
@@ -280,41 +283,23 @@ impl LightBuffer {
 }
 
 pub struct MergeBuffer {
-    interval: Duration,
     time: Arc<Mutex<TimeMap>>,
     count: Arc<Mutex<CountMap>>,
     gauge: Arc<Mutex<GaugeMap>>,
-    last: Instant,
-}
-
-impl Stream for MergeBuffer {
-    type Item = LightBuffer;
-    type Error = Error;
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        debug!("get a sleep with {:?}", self.interval);
-        let now = Instant::now();
-        if now.duration_since(self.last) < self.interval {
-            return Ok(Async::NotReady);
-        }
-        self.last = now;
-        Ok(Async::Ready(Some(self.truncate())))
-    }
 }
 
 impl MergeBuffer {
-    pub fn new(into: Arc<MsQueue<Line>>, interval: u64) -> MergeBuffer {
+    pub fn new(into: Arc<MsQueue<Line>>) -> MergeBuffer {
         let buf = MergeBuffer {
-            interval: Duration::from_secs(interval),
             time: Arc::new(Mutex::new(TimeMap::new())),
             count: Arc::new(Mutex::new(CountMap::new())),
             gauge: Arc::new(Mutex::new(GaugeMap::new())),
-            last: Instant::now(),
         };
         (&buf).collect(into);
         buf
     }
 
-    fn truncate(&self) -> LightBuffer {
+    pub fn truncate(&self) -> LightBuffer {
         let mut time = self.time.lock().unwrap();
         let mut count = self.count.lock().unwrap();
         let mut gauge = self.gauge.lock().unwrap();
@@ -411,7 +396,7 @@ pub struct Adapter;
 
 impl Adapter {
     pub fn run(input: Arc<MsQueue<Line>>) {
-        let merge_buffer = MergeBuffer::new(input, CONFIG.interval);
+        let merge_buffer = MergeBuffer::new(input);
         let mut sender = BackEndSender::default();
         debug!("start an adaptor");
         sender.serve(merge_buffer);
