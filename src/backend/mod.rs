@@ -54,7 +54,7 @@ impl Default for BackEndSender {
 }
 
 impl BackEndSender {
-    pub fn serve(&mut self, input: MergeBuffer) {
+    pub fn serve(&mut self, input: &MergeBuffer) {
         let mut core = Core::new().unwrap();
         let handle = core.handle();
         let graphite_addr = &CONFIG.graphite.address.parse::<SocketAddr>().unwrap();

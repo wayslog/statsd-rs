@@ -8,9 +8,7 @@ use std::ops::DerefMut;
 use std::result;
 use std::string::FromUtf8Error;
 use std::sync::{Arc, Mutex};
-use std::thread;
 
-use crossbeam::sync::MsQueue;
 use futures::stream::Stream;
 use futures::{Async, Poll};
 use tokio_core::net::{UdpCodec, UdpSocket};
@@ -28,13 +26,15 @@ const CLCR: u8 = '\n' as u8;
 pub struct Worker;
 
 impl Worker {
-    pub fn run(ring: HashRing) {
+    pub fn run(ring: HashRing, bufs: Arc<Vec<MergeBuffer>>) {
         let mut core = Core::new().unwrap();
         let handle = core.handle();
         let socket = Self::build_socket(&*CONFIG.bind.clone(), &handle, true);
         info!("worker: bind at {:?}", &CONFIG.bind);
-        let service =
-            socket.framed(RecvCodec {}).flatten().for_each(|item| Ok(ring.dispatch(item)));
+        let service = socket.framed(RecvCodec {}).flatten().for_each(|item| {
+            let pos = ring.position(&item.metric);
+            Ok(bufs[pos].push(item))
+        });
         core.run(service).unwrap();
     }
 
@@ -289,14 +289,35 @@ pub struct MergeBuffer {
 }
 
 impl MergeBuffer {
-    pub fn new(into: Arc<MsQueue<Line>>) -> MergeBuffer {
+    pub fn new() -> MergeBuffer {
         let buf = MergeBuffer {
             time: Arc::new(Mutex::new(TimeMap::new())),
             count: Arc::new(Mutex::new(CountMap::new())),
             gauge: Arc::new(Mutex::new(GaugeMap::new())),
         };
-        (&buf).collect(into);
         buf
+    }
+
+    pub fn push(&self, item: Line) {
+        let Line { metric: m, kind: k } = item;
+        match k {
+            Time(v, c) => {
+                let mut time_guard = self.time.lock().unwrap();
+                let tinst = time_guard.entry(m).or_insert(TimeSet(Vec::new(), 0.0));
+                tinst.0.push(v);
+                tinst.1 += c;
+            }
+            Count(v) => {
+                let mut count_guard = self.count.lock().unwrap();
+                let mut cinst = count_guard.entry(m).or_insert(ValueCount(0.0, 0.0));
+                cinst.0 += v;
+                cinst.1 += 1.0;
+            }
+            Gauge(v) => {
+                let mut gauge_guard = self.gauge.lock().unwrap();
+                *gauge_guard.entry(m).or_insert(0.0) = v;
+            }
+        }
     }
 
     pub fn truncate(&self) -> LightBuffer {
@@ -329,36 +350,6 @@ impl MergeBuffer {
             count: ncount,
             gauge: ngauge,
         }
-    }
-
-    fn collect(&self, input: Arc<MsQueue<Line>>) {
-        let time = self.time.clone();
-        let count = self.count.clone();
-        let gauge = self.gauge.clone();
-        thread::spawn(move || {
-            loop {
-                let item = input.pop();
-                let Line { metric: m, kind: k } = item;
-                match k {
-                    Time(v, c) => {
-                        let mut time_guard = time.lock().unwrap();
-                        let tinst = time_guard.entry(m).or_insert(TimeSet(Vec::new(), 0.0));
-                        tinst.0.push(v);
-                        tinst.1 += c;
-                    }
-                    Count(v) => {
-                        let mut count_guard = count.lock().unwrap();
-                        let mut cinst = count_guard.entry(m).or_insert(ValueCount(0.0, 0.0));
-                        cinst.0 += v;
-                        cinst.1 += 1.0;
-                    }
-                    Gauge(v) => {
-                        let mut gauge_guard = gauge.lock().unwrap();
-                        *gauge_guard.entry(m).or_insert(0.0) += v;
-                    }
-                }
-            }
-        });
     }
 }
 
@@ -394,8 +385,7 @@ impl From<FromUtf8Error> for StatsdError {
 pub struct Adapter;
 
 impl Adapter {
-    pub fn run(input: Arc<MsQueue<Line>>) {
-        let merge_buffer = MergeBuffer::new(input);
+    pub fn run(merge_buffer: &MergeBuffer) {
         let mut sender = BackEndSender::default();
         debug!("start an adaptor");
         sender.serve(merge_buffer);

@@ -9,7 +9,6 @@ extern crate serde_derive;
 #[macro_use]
 extern crate futures;
 
-extern crate crossbeam;
 extern crate env_logger;
 extern crate fnv;
 extern crate net2;
@@ -24,27 +23,36 @@ mod backend;
 mod ring;
 
 use std::path::Path;
+use std::sync::Arc;
 use std::thread;
 
-use worker::{Worker, Adapter};
+use worker::{Worker, Adapter, MergeBuffer};
 use ring::HashRing;
 
 pub fn run() {
     env_logger::init().unwrap();
     let ring = HashRing::new(CONFIG.stddev);
+    let merge_bufs: Vec<_> = (0..ring.num())
+        .into_iter()
+        .map(|_| MergeBuffer::new())
+        .collect();
+    let bufs = Arc::new(merge_bufs);
+
     let workers: Vec<_> = (0..CONFIG.worker)
         .map(|_| {
             let nring = ring.clone();
+            let nbufs = bufs.clone();
             thread::spawn(move || {
-                Worker::run(nring);
+                Worker::run(nring, nbufs);
             })
         })
         .collect();
-    let adapters: Vec<_> = ring.rings()
+    let adapters: Vec<_> = (0..ring.num())
         .into_iter()
-        .map(|input| {
+        .map(|idx| {
+            let nbufs = bufs.clone();
             thread::spawn(move || {
-                Adapter::run(input);
+                Adapter::run(nbufs.get(idx).unwrap());
             })
         })
         .collect();

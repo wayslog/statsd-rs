@@ -1,19 +1,16 @@
 use std::hash::Hasher;
-use std::sync::Arc;
 use std::default::Default;
 
-use crossbeam::sync::MsQueue;
 use fnv::FnvHasher;
 use num_cpus;
 
-use worker::Line;
 use com;
 
 // Generate for a ring buffer into sub threads
 #[derive(Clone)]
 pub struct HashRing {
     shield: usize,
-    ring: Vec<Arc<MsQueue<Line>>>,
+    num: usize,
 }
 
 impl HashRing {
@@ -27,15 +24,15 @@ impl HashRing {
                   last);
         }
         let shield = Self::make_shield(dev);
-        let ring: Vec<_> = (0..num)
-            .into_iter()
-            .map(|_| Arc::new(MsQueue::new()))
-            .collect();
 
         HashRing {
             shield: shield,
-            ring: ring,
+            num: num,
         }
+    }
+
+    pub fn num(&self) -> usize {
+        self.num
     }
 
     fn make_shield(dev: usize) -> usize {
@@ -46,14 +43,10 @@ impl HashRing {
         }
         shield
     }
-    pub fn dispatch(&self, line: Line) {
-        let mut hasher = FnvHasher::default();
-        hasher.write(line.metric.as_bytes());
-        let pos = hasher.finish() as usize & self.shield;
-        self.ring[pos].push(line);
-    }
 
-    pub fn rings(&self) -> Vec<Arc<MsQueue<Line>>> {
-        self.ring.clone()
+    pub fn position(&self, metric: &str) -> usize {
+        let mut hasher = FnvHasher::default();
+        hasher.write(metric.as_bytes());
+        hasher.finish() as usize & self.shield
     }
 }
