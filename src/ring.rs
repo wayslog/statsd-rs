@@ -16,11 +16,11 @@ pub struct HashRing {
 impl HashRing {
     pub fn new(dev: usize) -> HashRing {
         let num = 2usize.pow(dev as u32);
-        let allow_num = com::max(num_cpus::get(), 2);
-        // 最多不能超过半数核心
-        let last = com::min(allow_num / 2, num);
+        let allow_num = num_cpus::get();
+        // 最多不能超过核心数量
+        let last = com::min(allow_num, num);
         if last < num {
-            warn!("caculate threads are never more than half of the cpu, run as {} .",
+            warn!("caculate threads are never more than the number of the cpu, run as {} .",
                   last);
         }
         let shield = Self::make_shield(dev);
