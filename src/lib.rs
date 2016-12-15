@@ -31,7 +31,7 @@ use ring::HashRing;
 
 pub fn run() {
     env_logger::init().unwrap();
-    let ring = HashRing::new(CONFIG.stddev);
+    let ring = HashRing::new(CONFIG.ring, CONFIG.dup);
     let merge_bufs: Vec<_> = (0..ring.num())
         .into_iter()
         .map(|_| MergeBuffer::new())
@@ -47,6 +47,7 @@ pub fn run() {
             })
         })
         .collect();
+
     let adapters: Vec<_> = (0..ring.num())
         .into_iter()
         .map(|idx| {
@@ -69,7 +70,8 @@ pub struct Config {
     pub graphite: GraphiteConfig,
     pub banshee: BansheeConfig,
     pub interval: u64,
-    pub stddev: usize,
+    pub ring: usize,
+    pub dup: usize,
     pub bind: String,
     pub worker: usize,
 }

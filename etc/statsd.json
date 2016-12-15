@@ -8,7 +8,8 @@
         "address": "127.0.0.1:8126"
     },
     "interval": 5,
-    "stddev": 1,
+    "ring": 24,
+    "dup": 256,
     "bind": "0.0.0.0:8125",
     "worker": 2
 }
