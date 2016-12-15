@@ -110,8 +110,8 @@ lazy_static! {
         use std::env;
         let mut args = env::args().into_iter().skip(1);
         let pth = args.next().unwrap_or("/srv/statsd-rs/etc/statsd.json".to_owned());
-        let config = Config::load(pth);
-        info!("load Config as: {:?}", config);
+        let config = Config::load(&pth);
+        info!("load Config as: {:?} from {}", config, pth);
         config
     };
 }
@@ -120,10 +120,25 @@ lazy_static! {
 mod tests {
     use test::Bencher;
 
+    use std::mem;
+
     #[test]
     fn test_it_works() {}
+
     #[bench]
-    fn bench_empty(_b: &mut Bencher) {}
+    fn bench_swap(b: &mut Bencher) {
+        let mut v1: Vec<_> = (0..1_000_000).into_iter().collect();
+        let mut v2 = Vec::new();
+        let mut order = true;
+        b.iter(|| {
+            if order {
+                mem::swap(&mut v1, &mut v2);
+            } else {
+                mem::swap(&mut v2, &mut v1);
+            }
+            order = !order;
+        });
+    }
 }
 
 pub mod com {

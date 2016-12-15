@@ -42,12 +42,12 @@ impl Worker {
         let socket = UdpBuilder::new_v4()
             .expect("udp port is full")
             .reuse_address(true)
-            .expect("SO_REUSEPORT not support")
+            .expect("SO_ADDRESS not support")
             .reuse_port(reuse_port)
             .expect("SO_REUSEPORT not support")
             .bind(bind)
             .map_err(|err| {
-                error!("bind Faild error: {}", err);
+                error!("bind faild error: {}", err);
                 err
             })
             .unwrap();
@@ -92,7 +92,6 @@ impl Stream for Packet {
             return Ok(Async::Ready(None));
         }
 
-        debug!("send a part of one packet");
         let mut drained: Vec<_> = match self.buf.iter().position(|x| x == &CLCR) {
             Some(pos) => self.buf.drain(..pos + 1).into_iter().collect(),
             None => self.buf.drain(..).into_iter().collect(),
@@ -266,6 +265,7 @@ impl LightBuffer {
             } else {
                 (values[count / 2 - 1] + values[count / 2]) / 2.0
             };
+
             // NOT SUPPORT stddev
             current.insert("upper".to_owned(), max);
             current.insert("lower".to_owned(), min);
@@ -317,10 +317,10 @@ impl MergeBuffer {
         mem::swap(&mut ngauge, gauge.deref_mut());
         mem::drop(gauge);
 
-        info!("get a {} timer, {} counter, {} gauger",
-              ntime.len(),
-              ncount.len(),
-              ngauge.len());
+        debug!("get a {} timer, {} counter, {} gauger",
+               ntime.len(),
+               ncount.len(),
+               ngauge.len());
 
         let time_data = LightBuffer::caculate_time(ntime);
         LightBuffer {
@@ -347,7 +347,6 @@ impl MergeBuffer {
                         tinst.1 += c;
                     }
                     Count(v) => {
-                        info!("pushed count value");
                         let mut count_guard = count.lock().unwrap();
                         let mut cinst = count_guard.entry(m).or_insert(ValueCount(0.0, 0.0));
                         cinst.0 += v;

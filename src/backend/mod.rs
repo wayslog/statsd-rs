@@ -60,39 +60,47 @@ impl BackEndSender {
         let graphite_addr = &CONFIG.graphite.address.parse::<SocketAddr>().unwrap();
         let banshee_addr = &CONFIG.banshee.address.parse::<SocketAddr>().unwrap();
         let dur = Duration::from_secs(CONFIG.interval);
+        // hard code and ugly way to implment it
+
         loop {
             thread::sleep(dur);
             let item = input.truncate();
             let graphite_buf = self.graphite.apply(&item);
             let graphite = TcpStream::connect(&graphite_addr, &handle).and_then(|socket| {
-                info!("get a new connection");
+                debug!("get a new connection");
                 send_to(socket, graphite_buf)
             });
 
             let banshee_buf = self.banshee.apply(&item);
             let banshee = TcpStream::connect(&banshee_addr, &handle).and_then(|socket| {
-                info!("get a new connection");
+                debug!("get a new connection");
                 send_to(socket, banshee_buf)
             });
+
             let service = graphite.join(banshee);
-            core.run(service).unwrap();
+            match core.run(service) {
+                Ok(_) => {}
+                Err(err) => {
+                    error!("unknown error when send to backend, error: {}", err);
+                }
+            };
         }
     }
 }
 
 
 fn send_to(mut socket: TcpStream, buf: Vec<u8>) -> Result<()> {
-    info!("want to write the buffer");
+    debug!("want to write the buffer");
     if buf.len() == 0 {
-        info!("but get a zero len of buffer");
+        debug!("but get a zero len of buffer");
         return Ok(());
     }
     loop {
-        info!("write back all the value");
+        debug!("write back all the value");
         let ret = match socket.write_all(&buf) {
             Err(ref err) if err.kind() == ErrorKind::WouldBlock => continue,
             var => {
-                info!("get a result {:?}", &var);
+                debug!("get a result {:?}", &var);
                 var
             }
         };

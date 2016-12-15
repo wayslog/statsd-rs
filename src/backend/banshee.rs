@@ -2,6 +2,7 @@ use std::default::Default;
 
 use worker::{ValueCount, TimeData, CountData, GaugeData};
 use backend::BackEnd;
+use ::CONFIG;
 
 pub struct Banshee {
     allow_time: Vec<String>,
@@ -14,10 +15,11 @@ pub struct Banshee {
 impl Default for Banshee {
     fn default() -> Self {
         Banshee {
-            allow_time: vec!["mean_90".to_owned(), "count_ps".to_owned()],
+            allow_time: CONFIG.banshee.allow.clone(),
             prefix_counter: "counter".to_owned(),
             prefix_timer: "timer".to_owned(),
             prefix_gauge: "gauge".to_owned(),
+            // always validate
             validate: true,
         }
     }
@@ -35,6 +37,7 @@ impl BackEnd for Banshee {
                 format!("{}.{} {} {}\n", self.prefix_counter, key, ts, value)
             });
         for line in iter {
+            debug!("banshee get a line as {}", &line);
             buf.extend_from_slice(line.as_bytes());
         }
     }
@@ -43,6 +46,7 @@ impl BackEnd for Banshee {
         let iter = gauge.into_iter()
             .map(|(key, value)| format!("{}.{} {} {}\n", self.prefix_gauge, key, ts, value));
         for line in iter {
+            debug!("banshee get a line as {}", &line);
             buf.extend_from_slice(line.as_bytes());
         }
     }
@@ -57,6 +61,7 @@ impl BackEnd for Banshee {
                                    sub_key,
                                    ts,
                                    value);
+                debug!("banshee get a line as {}", &line);
                 buf.extend_from_slice(line.as_bytes());
             }
         }

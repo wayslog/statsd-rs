@@ -11,10 +11,6 @@ path="src/lib.rs"
 name="statsd"
 path="src/bin/statsd.rs"
 
-[[bin]]
-name="mocktcp"
-path="src/mock/mocktcp.rs"
-
 [dependencies]
 net2 = "0.2.26"
 num_cpus = "1.1.0"
