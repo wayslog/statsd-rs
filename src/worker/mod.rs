@@ -99,7 +99,7 @@ impl Stream for Packet {
                 return Ok(Async::Ready(None));
             } else {
                 let ret = Ok(Async::Ready(Some(Line::report("statsd.recv", self.size))));
-                self.size == 0;
+                self.size = 0;
                 return ret;
             }
         }
