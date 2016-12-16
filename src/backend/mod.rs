@@ -3,7 +3,7 @@ pub mod banshee;
 
 use std::io::{Write, ErrorKind, Result, Error};
 use std::net::SocketAddr;
-use std::time::Duration;
+use std::time::{Instant, Duration};
 use std::thread;
 
 use futures::{self, Future};
@@ -60,10 +60,17 @@ impl BackEndSender {
         let graphite_addr = &CONFIG.graphite.address.parse::<SocketAddr>().unwrap();
         let banshee_addr = &CONFIG.banshee.address.parse::<SocketAddr>().unwrap();
         let dur = Duration::from_secs(CONFIG.interval);
+        let mut last = Instant::now();
         // hard code and ugly way to implment it
 
         loop {
-            thread::sleep(dur);
+            let now = Instant::now();
+            let ndur = now.duration_since(last);
+            if ndur < dur {
+                thread::sleep(ndur);
+                continue;
+            }
+            last = now;
             let item = input.truncate();
             let graphite_buf = self.graphite.apply(&item);
             let graphite_empty = graphite_buf.is_empty();
@@ -71,10 +78,10 @@ impl BackEndSender {
                 debug!("get a new connection");
                 send_to(socket, graphite_buf)
             });
-            let graphite = futures::lazy(|| if graphite_empty {
+            let graphite = futures::lazy(|| if !graphite_empty {
                     Ok(())
                 } else {
-                    Err(Error::new(ErrorKind::Other, "done"))
+                    Err(Error::new(ErrorKind::Other, "empty graphite buffer"))
                 })
                 .and_then(|_| graphite_service);
 
@@ -85,16 +92,19 @@ impl BackEndSender {
                 send_to(socket, banshee_buf)
             });
 
-            let banshee = futures::lazy(|| if banshee_empty {
+            let banshee = futures::lazy(|| if !banshee_empty {
                     Ok(())
                 } else {
-                    Err(Error::new(ErrorKind::Other, "done"))
+                    Err(Error::new(ErrorKind::Other, "empty banshee buffer"))
                 })
                 .and_then(|_| banshee_service);
 
             let service = graphite.join(banshee);
             match core.run(service) {
                 Ok(_) => {}
+                Err(ref err) if err.kind() == ErrorKind::Other => {
+                    debug!("empty buffer, skip");
+                }
                 Err(err) => {
                     error!("unknown error when send to backend, error: {}", err);
                 }
