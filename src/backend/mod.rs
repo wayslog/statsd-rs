@@ -1,12 +1,12 @@
 pub mod graphite;
 pub mod banshee;
 
-use std::io::{Write, ErrorKind, Result};
+use std::io::{Write, ErrorKind, Result, Error};
 use std::net::SocketAddr;
 use std::time::Duration;
 use std::thread;
 
-use futures::Future;
+use futures::{self, Future};
 use tokio_core::reactor::Core;
 use tokio_core::net::TcpStream;
 use worker::{LightBuffer, TimeData, CountData, GaugeData, MergeBuffer};
@@ -66,16 +66,31 @@ impl BackEndSender {
             thread::sleep(dur);
             let item = input.truncate();
             let graphite_buf = self.graphite.apply(&item);
-            let graphite = TcpStream::connect(&graphite_addr, &handle).and_then(|socket| {
+            let graphite_empty = graphite_buf.is_empty();
+            let graphite_service = TcpStream::connect(&graphite_addr, &handle).and_then(|socket| {
                 debug!("get a new connection");
                 send_to(socket, graphite_buf)
             });
+            let graphite = futures::lazy(|| if graphite_empty {
+                    Ok(())
+                } else {
+                    Err(Error::new(ErrorKind::Other, "done"))
+                })
+                .and_then(|_| graphite_service);
 
             let banshee_buf = self.banshee.apply(&item);
-            let banshee = TcpStream::connect(&banshee_addr, &handle).and_then(|socket| {
+            let banshee_empty = banshee_buf.is_empty();
+            let banshee_service = TcpStream::connect(&banshee_addr, &handle).and_then(|socket| {
                 debug!("get a new connection");
                 send_to(socket, banshee_buf)
             });
+
+            let banshee = futures::lazy(|| if banshee_empty {
+                    Ok(())
+                } else {
+                    Err(Error::new(ErrorKind::Other, "done"))
+                })
+                .and_then(|_| banshee_service);
 
             let service = graphite.join(banshee);
             match core.run(service) {

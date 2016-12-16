@@ -88,7 +88,7 @@ impl Stream for Packet {
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         if self.buf.len() == 0 {
-            debug!("a packet was parsed");
+            debug!("a full packet was parsed");
             return Ok(Async::Ready(None));
         }
 
