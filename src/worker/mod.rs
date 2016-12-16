@@ -42,8 +42,8 @@ impl Worker {
     fn build_socket<T: ToSocketAddrs>(bind: T, handle: &Handle, reuse_port: bool) -> UdpSocket {
         let socket = UdpBuilder::new_v4()
             .expect("udp port is full")
-            .reuse_address(true)
-            .expect("SO_ADDRESS not support")
+            // .reuse_address(true)
+            // .expect("SO_ADDRESS not support")
             .reuse_port(reuse_port)
             .expect("SO_REUSEPORT not support")
             .bind(bind)
@@ -74,11 +74,16 @@ impl UdpCodec for RecvCodec {
 
 pub struct Packet {
     buf: Vec<u8>,
+    size: usize,
 }
 
 impl Packet {
     pub fn from(buf: Vec<u8>) -> Packet {
-        Packet { buf: buf }
+        let size = buf.len();
+        Packet {
+            buf: buf,
+            size: size,
+        }
     }
 }
 
@@ -90,7 +95,13 @@ impl Stream for Packet {
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         if self.buf.len() == 0 {
             debug!("a full packet was parsed");
-            return Ok(Async::Ready(None));
+            if self.size == 0 {
+                return Ok(Async::Ready(None));
+            } else {
+                let ret = Ok(Async::Ready(Some(Line::report("statsd.recv", self.size))));
+                self.size == 0;
+                return ret;
+            }
         }
 
         let mut drained: Vec<_> = match self.buf.iter().position(|x| x == &CLCR) {
@@ -164,6 +175,15 @@ pub struct Line {
 }
 
 impl Line {
+    fn report(metric: &str, value: usize) -> Line {
+        let metric = metric.to_owned();
+        let kind = Kind::Count(value as f64);
+        Line {
+            metric: metric,
+            kind: kind,
+        }
+    }
+
     fn parse(input: String) -> Result<Line> {
         let mut lsp = input.split(":");
         let metric = lsp.next().ok_or(StatsdError::WrongLine)?;
@@ -285,15 +305,16 @@ impl LightBuffer {
             let mut latest = min;
 
             for &val in values.iter().skip(1) {
-                cumulative.push(val + latest);
-                latest = val;
+                let nval = val + latest;
+                cumulative.push(nval);
+                latest = nval;
             }
 
             for &threshold in &CONFIG.thresholds[..] {
                 let abs_threshold = threshold.abs();
                 let mut threshold_num = count;
                 if count > 1 {
-                    threshold_num = (threshold.abs() * (count as i64) / 100) as usize;
+                    threshold_num = (threshold.abs() as f64 * ((count as f64) / 100.0)) as usize;
                     if threshold_num == 0 {
                         continue;
                     }
