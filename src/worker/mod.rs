@@ -21,6 +21,7 @@ use backend::BackEndSender;
 use com::now;
 use ring::HashRing;
 
+
 const CLCR: u8 = '\n' as u8;
 
 pub struct Worker;
@@ -96,6 +97,7 @@ impl Stream for Packet {
             Some(pos) => self.buf.drain(..pos + 1).into_iter().collect(),
             None => self.buf.drain(..).into_iter().collect(),
         };
+
         if drained.len() > 0 && drained[drained.len() - 1] == CLCR {
             let _clcr = drained.pop().unwrap();
         }
@@ -201,6 +203,63 @@ pub struct LightBuffer {
     pub time: TimeData,
 }
 
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use test::Bencher;
+
+    #[test]
+    fn test_caculate_time() {
+        let values: Vec<_> = (0..100_000).into_iter().map(|_| 1.0).collect();
+        let count = values.len() as f64;
+        let ts = TimeSet(values, count);
+        let mut tm = TimeMap::new();
+        tm.insert("test.hello".to_owned(), ts);
+        let td = LightBuffer::caculate_time(tm);
+        let subs = td.get("test.hello").unwrap();
+        assert_eq!(*subs.get("count_ps").unwrap(), count / 5.0);
+    }
+
+    #[bench]
+    fn bench_caculate_time(b: &mut Bencher) {
+        let values: Vec<_> = (0..10000).into_iter().map(|_| 1.0).collect();
+        let count = values.len() as f64;
+        let ts = TimeSet(values, count);
+        let mut tm = TimeMap::new();
+        for number in 0..400 {
+            tm.insert(format!("test.hello.{}", number), ts.clone());
+        }
+        b.iter(|| {
+            let _td = LightBuffer::caculate_time(tm.clone());
+        });
+    }
+
+    #[bench]
+    fn bench_push_time(b: &mut Bencher) {
+        b.iter(|| bench_push_time_single())
+    }
+
+    fn bench_push_time_single() {
+        let buf = MergeBuffer::new();
+        let keys: Vec<_> = (0..400)
+            .into_iter()
+            .map(|num| format!("test.hello.{}", num))
+            .collect();
+
+        for _ in 0..10000 {
+            for num in 0..400 {
+                let kind = Kind::Time(1.0, 1.0);
+                let line = Line {
+                    kind: kind,
+                    metric: keys[num].clone(),
+                };
+                buf.push(line);
+            }
+        }
+    }
+}
+
 impl LightBuffer {
     fn caculate_time(time: TimeMap) -> TimeData {
         debug!("caculate time value start");
@@ -302,20 +361,32 @@ impl MergeBuffer {
         let Line { metric: m, kind: k } = item;
         match k {
             Time(v, c) => {
-                let mut time_guard = self.time.lock().unwrap();
-                let tinst = time_guard.entry(m).or_insert(TimeSet(Vec::new(), 0.0));
-                tinst.0.push(v);
-                tinst.1 += c;
+                loop {
+                    if let Ok(mut time_guard) = self.time.try_lock() {
+                        let tinst = time_guard.entry(m).or_insert(TimeSet(Vec::new(), 0.0));
+                        tinst.0.push(v);
+                        tinst.1 += c;
+                        break;
+                    };
+                }
             }
             Count(v) => {
-                let mut count_guard = self.count.lock().unwrap();
-                let mut cinst = count_guard.entry(m).or_insert(ValueCount(0.0, 0.0));
-                cinst.0 += v;
-                cinst.1 += 1.0;
+                loop {
+                    if let Ok(mut count_guard) = self.count.try_lock() {
+                        let mut cinst = count_guard.entry(m).or_insert(ValueCount(0.0, 0.0));
+                        cinst.0 += v;
+                        cinst.1 += 1.0;
+                        break;
+                    }
+                }
             }
             Gauge(v) => {
-                let mut gauge_guard = self.gauge.lock().unwrap();
-                *gauge_guard.entry(m).or_insert(0.0) = v;
+                loop {
+                    if let Ok(mut gauge_guard) = self.gauge.try_lock() {
+                        *gauge_guard.entry(m).or_insert(0.0) = v;
+                        break;
+                    }
+                }
             }
         }
     }

@@ -115,11 +115,22 @@ impl Config {
     }
 }
 
+#[cfg(test)]
+fn get_cfg_path() -> String {
+    return "/srv/statsd-rs/etc/statsd.json".to_owned();
+}
+
+#[cfg(not(test))]
+fn get_cfg_path() -> String {
+    use std::env;
+    let mut args = env::args().into_iter().skip(1);
+    let pth = args.next().unwrap_or("/srv/statsd-rs/etc/statsd.json".to_owned());
+    pth
+}
+
 lazy_static! {
     pub static ref CONFIG: Config  = {
-        use std::env;
-        let mut args = env::args().into_iter().skip(1);
-        let pth = args.next().unwrap_or("/srv/statsd-rs/etc/statsd.json".to_owned());
+        let pth = get_cfg_path();
         let config = Config::load(&pth);
         info!("load Config as: {:?} from {}", config, pth);
         config
