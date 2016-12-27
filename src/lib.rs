@@ -1,4 +1,4 @@
-#![feature(proc_macro, test)]
+#![feature(proc_macro, test, integer_atomics)]
 
 #[macro_use]
 extern crate lazy_static;
@@ -31,6 +31,7 @@ use ring::HashRing;
 
 pub fn run() {
     env_logger::init().unwrap();
+    thread::spawn(move || worker::report());
     let ring = HashRing::new(CONFIG.ring, CONFIG.dup);
     let merge_bufs: Vec<_> = (0..ring.num())
         .into_iter()

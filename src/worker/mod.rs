@@ -21,10 +21,35 @@ use backend::BackEndSender;
 use com::now;
 use ring::HashRing;
 
-
 const CLCR: u8 = '\n' as u8;
 
 pub struct Worker;
+
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering::SeqCst;
+use std::time::{Instant, Duration};
+use std::thread;
+
+lazy_static!{
+    pub static ref COUNTER: AtomicU64  = {
+        AtomicU64::new(0)
+    };
+}
+
+pub fn report() {
+    let mut latest = Instant::now();
+    let interval = Duration::from_secs(5);
+    loop {
+        thread::sleep(interval);
+        let val = COUNTER.load(SeqCst);
+        let kb = val as f64 / 1024.0;
+        let mb = kb / 1024.0;
+        let now = Instant::now();
+        let dur = now.duration_since(latest);
+        latest = now;
+        info!("recived: {} bytes, {} kb, {} mb in {:?}", val, kb, mb, dur);
+    }
+}
 
 impl Worker {
     pub fn run(ring: HashRing, bufs: Arc<Vec<MergeBuffer>>) {
@@ -64,6 +89,8 @@ impl UdpCodec for RecvCodec {
 
     fn decode(&mut self, _addr: &SocketAddr, buf: &[u8]) -> io::Result<Self::In> {
         debug!("get a new packet");
+        let len = buf.len() as u64;
+        COUNTER.fetch_add(len, SeqCst);
         Ok(Packet::from(buf.to_vec()))
     }
 
