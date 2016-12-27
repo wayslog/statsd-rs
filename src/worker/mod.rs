@@ -42,8 +42,8 @@ impl Worker {
     fn build_socket<T: ToSocketAddrs>(bind: T, handle: &Handle, reuse_port: bool) -> UdpSocket {
         let socket = UdpBuilder::new_v4()
             .expect("udp port is full")
-            // .reuse_address(true)
-            // .expect("SO_ADDRESS not support")
+            .reuse_address(true)
+            .expect("SO_ADDRESS not support")
             .reuse_port(reuse_port)
             .expect("SO_REUSEPORT not support")
             .bind(bind)

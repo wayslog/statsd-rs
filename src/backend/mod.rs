@@ -1,12 +1,12 @@
 pub mod graphite;
 pub mod banshee;
 
-use std::io::{Write, ErrorKind, Result, Error};
+use std::io::{Write, ErrorKind, Result};
 use std::net::SocketAddr;
 use std::time::{Instant, Duration};
 use std::thread;
 
-use futures::{self, Future};
+use futures::Future;
 use tokio_core::reactor::Core;
 use tokio_core::net::TcpStream;
 use worker::{LightBuffer, TimeData, CountData, GaugeData, MergeBuffer};
@@ -72,17 +72,19 @@ impl BackEndSender {
             }
             last = now;
             let item = input.truncate();
-            let graphite_buf = self.graphite.apply(&item);
-            let graphite = TcpStream::connect(&graphite_addr, &handle).and_then(|socket| {
-                debug!("get a new connection");
-                send_to(socket, graphite_buf)
-            });
 
             let banshee_buf = self.banshee.apply(&item);
             let banshee = TcpStream::connect(&banshee_addr, &handle).and_then(|socket| {
                 debug!("get a new connection");
                 send_to(socket, banshee_buf)
             });
+
+            let graphite_buf = self.graphite.apply(&item);
+            let graphite = TcpStream::connect(&graphite_addr, &handle).and_then(|socket| {
+                debug!("get a new connection");
+                send_to(socket, graphite_buf)
+            });
+
 
             let service = graphite.join(banshee);
             match core.run(service) {

@@ -24,7 +24,7 @@ while 1:
     conn, addr = s.accept()
     print 'Connected with ' + addr[0] + ':' + str(addr[1])
     while 1:
-        data = conn.recv(1024)
+        data = conn.recv(2048)
         if not data:
             conn.close()
             break

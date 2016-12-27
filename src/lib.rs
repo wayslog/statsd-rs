@@ -117,7 +117,7 @@ impl Config {
 
 #[cfg(test)]
 fn get_cfg_path() -> String {
-    return "/srv/statsd-rs/etc/statsd.json".to_owned();
+    return "etc/statsd.json".to_owned();
 }
 
 #[cfg(not(test))]
