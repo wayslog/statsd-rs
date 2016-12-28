@@ -25,12 +25,6 @@ const CLCR: u8 = '\n' as u8;
 
 pub struct Worker;
 
-use std::sync::atomic::AtomicU64;
-use std::sync::atomic::Ordering::SeqCst;
-use std::time::{Instant, Duration};
-use std::thread;
-
-
 impl Worker {
     pub fn run(ring: HashRing, bufs: Arc<Vec<MergeBuffer>>) {
         let mut core = Core::new().unwrap();
@@ -69,7 +63,6 @@ impl UdpCodec for RecvCodec {
 
     fn decode(&mut self, _addr: &SocketAddr, buf: &[u8]) -> io::Result<Self::In> {
         debug!("get a new packet");
-        let len = buf.len() as u64;
         Ok(Packet::from(buf.to_vec()))
     }
 
@@ -161,7 +154,7 @@ impl Kind {
                 let value = value_str.parse::<f64>().unwrap_or(0.0);
                 Ok(Time(value, 1.0 / rate))
             }
-            "c" => {
+            "" | "c" => {
                 let value = value_str.parse::<f64>().unwrap_or(1.0);
                 Ok(Count(value / rate))
             }
@@ -196,9 +189,9 @@ impl Line {
         let bits = lsp.next().ok_or(StatsdError::WrongLine)?;
         let mut bsp = bits.split("|");
         let value_str = bsp.next().ok_or(StatsdError::WrongLine)?;
-        let kind_str = bsp.next().ok_or(StatsdError::WrongLine)?;
+        let kind_str = bsp.next().unwrap_or("c");
         // sample rate support
-        let rate_str = bsp.next().unwrap_or("1.0");
+        let rate_str = bsp.next().map(|v| v.trim_matches('@')).unwrap_or("1.0");
         let kind = Kind::parse(value_str.trim(), kind_str.trim(), rate_str.trim())?;
         Ok(Line {
             metric: metric.to_owned(),
