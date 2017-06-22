@@ -1,4 +1,4 @@
-#![feature(proc_macro, test, integer_atomics)]
+#![feature(test)]
 
 #[macro_use]
 extern crate lazy_static;
@@ -6,9 +6,8 @@ extern crate lazy_static;
 extern crate log;
 #[macro_use]
 extern crate serde_derive;
-#[macro_use]
-extern crate futures;
 
+extern crate futures;
 extern crate env_logger;
 extern crate fnv;
 extern crate net2;
@@ -135,31 +134,6 @@ lazy_static! {
         info!("load Config as: {:?} from {}", config, pth);
         config
     };
-}
-
-#[cfg(test)]
-mod tests {
-    use test::Bencher;
-
-    use std::mem;
-
-    #[test]
-    fn test_it_works() {}
-
-    #[bench]
-    fn bench_swap(b: &mut Bencher) {
-        let mut v1: Vec<_> = (0..1_000_000).into_iter().collect();
-        let mut v2 = Vec::new();
-        let mut order = true;
-        b.iter(|| {
-            if order {
-                mem::swap(&mut v1, &mut v2);
-            } else {
-                mem::swap(&mut v2, &mut v1);
-            }
-            order = !order;
-        });
-    }
 }
 
 pub mod com {

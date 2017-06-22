@@ -266,7 +266,7 @@ mod test {
             .map(|num| format!("test.hello.{}", num))
             .collect();
 
-        for _ in 0..10000 {
+        for _ in 0..1000 {
             for num in 0..400 {
                 let kind = Kind::Time(1.0, 1.0);
                 let line = Line {
