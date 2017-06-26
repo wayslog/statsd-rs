@@ -2,12 +2,14 @@ use std::default::Default;
 
 use worker::{ValueCount, TimeData, CountData, GaugeData};
 use backend::BackEnd;
+use ::CONFIG;
 
 pub struct Graphite {
     prefix_counter: String,
     prefix_stats_count: String,
     prefix_timer: String,
     prefix_gauge: String,
+    validate: bool,
 }
 
 impl Default for Graphite {
@@ -17,11 +19,16 @@ impl Default for Graphite {
             prefix_stats_count: "stats_counts".to_owned(),
             prefix_timer: "stats.timers".to_owned(),
             prefix_gauge: "stats.gauges".to_owned(),
+            validate: CONFIG.graphite.validate,
         }
     }
 }
 
 impl BackEnd for Graphite {
+    fn validate(&self) -> bool {
+        self.validate
+    }
+
     fn counting(&self, ts: u64, count: &CountData, buffer: &mut Vec<u8>) {
         let iter = count.into_iter()
             .map(|(key, &ValueCount(v, c))| {

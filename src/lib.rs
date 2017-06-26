@@ -78,12 +78,14 @@ pub struct Config {
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct GraphiteConfig {
     pub address: String,
+    pub validate: bool,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct BansheeConfig {
     pub address: String,
     pub allow: Vec<String>,
+    pub validate: bool,
 }
 
 fn usage() -> &'static str {

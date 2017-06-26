@@ -20,7 +20,7 @@ impl Default for Banshee {
             prefix_timer: "timer".to_owned(),
             prefix_gauge: "gauge".to_owned(),
             // always validate
-            validate: true,
+            validate: CONFIG.banshee.validate,
         }
     }
 }

@@ -56,8 +56,10 @@ impl BackEndSender {
     pub fn serve(&mut self, input: &MergeBuffer) {
         let mut core = Core::new().unwrap();
         let handle = core.handle();
-        let graphite_addr = &CONFIG.graphite.address.parse::<SocketAddr>().unwrap();
-        let banshee_addr = &CONFIG.banshee.address.parse::<SocketAddr>().unwrap();
+
+        let graphite_addr = &CONFIG.graphite.address.parse::<SocketAddr>();
+        let banshee_addr = &CONFIG.banshee.address.parse::<SocketAddr>();
+
         let dur = Duration::from_secs(CONFIG.interval);
         let mut last = Instant::now();
         // hard code and ugly way to implment it
@@ -82,7 +84,12 @@ impl BackEndSender {
                         Ok(())
                     }
                 })
-                .and_then(|_| TcpStream::connect(&banshee_addr, &handle))
+                .and_then(|_| {
+                    banshee_addr.clone().map_err(|_| {
+                        Error::new(ErrorKind::AddrNotAvailable, "socket not connected")
+                    })
+                })
+                .and_then(|addr| TcpStream::connect(&addr, &handle))
                 .and_then(|socket| {
                     debug!("get a new connection");
                     send_to(socket, banshee_buf)
@@ -96,7 +103,12 @@ impl BackEndSender {
                         Ok(())
                     }
                 })
-                .and_then(|_| TcpStream::connect(&graphite_addr, &handle))
+                .and_then(|_| {
+                    graphite_addr.clone().map_err(|_| {
+                        Error::new(ErrorKind::AddrNotAvailable, "socket not connected")
+                    })
+                })
+                .and_then(|addr| TcpStream::connect(&addr, &handle))
                 .and_then(|socket| send_to(socket, graphite_buf));
 
             let service = graphite.join(banshee);

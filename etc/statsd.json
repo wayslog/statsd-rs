@@ -1,11 +1,13 @@
 {
     "thresholds": [90, 95],
     "graphite": {
-        "address": "127.0.0.1:8125"
+        "address": "127.0.0.1:8125",
+        "validate": true
     },
     "banshee": {
         "allow": ["mean_90", "count_ps"],
-        "address": "127.0.0.1:8126"
+        "address": "127.0.0.1:8126",
+        "validate": true
     },
     "interval": 5,
     "ring": 24,
