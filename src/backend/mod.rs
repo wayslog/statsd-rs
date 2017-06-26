@@ -1,12 +1,12 @@
 pub mod graphite;
 pub mod banshee;
 
-use std::io::{Write, ErrorKind, Result};
+use std::io::{Write, ErrorKind, Result, Error};
 use std::net::SocketAddr;
 use std::time::{Instant, Duration};
 use std::thread;
 
-use futures::Future;
+use futures::{Future, future};
 use tokio_core::reactor::Core;
 use tokio_core::net::TcpStream;
 use worker::{LightBuffer, TimeData, CountData, GaugeData, MergeBuffer};
@@ -21,7 +21,6 @@ pub trait BackEnd {
     fn timing(&self, ts: u64, time: &TimeData, buf: &mut Vec<u8>);
 
     fn validate(&self) -> bool {
-        debug!("validate backend");
         true
     }
 
@@ -62,6 +61,8 @@ impl BackEndSender {
         let dur = Duration::from_secs(CONFIG.interval);
         let mut last = Instant::now();
         // hard code and ugly way to implment it
+        let graphite_validate = self.graphite.validate();
+        let banshee_validate = self.banshee.validate();
 
         loop {
             let now = Instant::now();
@@ -74,17 +75,29 @@ impl BackEndSender {
             let item = input.truncate();
 
             let banshee_buf = self.banshee.apply(&item);
-            let banshee = TcpStream::connect(&banshee_addr, &handle).and_then(|socket| {
-                debug!("get a new connection");
-                send_to(socket, banshee_buf)
-            });
+            let banshee = future::lazy(|| -> Result<()> {
+                    if banshee_validate {
+                        Err(Error::new(ErrorKind::Other, "banshee not validate"))
+                    } else {
+                        Ok(())
+                    }
+                })
+                .and_then(|_| TcpStream::connect(&banshee_addr, &handle))
+                .and_then(|socket| {
+                    debug!("get a new connection");
+                    send_to(socket, banshee_buf)
+                });
 
             let graphite_buf = self.graphite.apply(&item);
-            let graphite = TcpStream::connect(&graphite_addr, &handle).and_then(|socket| {
-                debug!("get a new connection");
-                send_to(socket, graphite_buf)
-            });
-
+            let graphite = future::lazy(|| -> Result<()> {
+                    if graphite_validate {
+                        Err(Error::new(ErrorKind::Other, "graphite not validate"))
+                    } else {
+                        Ok(())
+                    }
+                })
+                .and_then(|_| TcpStream::connect(&graphite_addr, &handle))
+                .and_then(|socket| send_to(socket, graphite_buf));
 
             let service = graphite.join(banshee);
             match core.run(service) {
